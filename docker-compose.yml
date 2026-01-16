@@ -139,8 +139,8 @@ services:
       # extra_float_digits: Prisma compatibility
       # search_path: Prisma schema parameter
       - IGNORE_STARTUP_PARAMETERS=extra_float_digits,search_path
-      # Auth settings (scram-sha-256 for PostgreSQL 14+)
-      - AUTH_TYPE=scram-sha-256
+      # Auth settings - plain text auth with userlist.txt
+      - AUTH_TYPE=plain
       - AUTH_FILE=/etc/pgbouncer/userlist.txt
     volumes:
       - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro

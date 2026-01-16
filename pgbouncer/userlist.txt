@@ -1,5 +1,1 @@
-;; PgBouncer User List for SCRAM-SHA-256 authentication
-;; Format: "username" "SCRAM-SHA-256$<iterations>:<salt>$<StoredKey>:<ServerKey>"
-;; Get from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
-
-"postgres" "SCRAM-SHA-256$4096:TXDrQpYOwL0+n0jU/LIpHw==$F3exgLeXf1uDfP1D+htbcVpEviTkNO7rvukx9sQAu1M=:ncpDyIp+cEwJUYaVIx5g/NNLB5BQE+0vEYDKOyL3MHg="
+"postgres" "postgres"
