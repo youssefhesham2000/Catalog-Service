@@ -1,0 +1,89 @@
+# ClusterIP Service for internal access
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-api-service
+  namespace: bosta-search
+  labels:
+    app: search-api
+spec:
+  type: ClusterIP
+  selector:
+    app: search-api
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  sessionAffinity: None
+---
+# LoadBalancer Service for external access
+# Use this for cloud providers (AWS, GCP, Azure)
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-api-lb
+  namespace: bosta-search
+  labels:
+    app: search-api
+  annotations:
+    # AWS specific
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    # GCP specific
+    # cloud.google.com/load-balancer-type: "External"
+spec:
+  type: LoadBalancer
+  selector:
+    app: search-api
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+---
+# Ingress (alternative to LoadBalancer)
+# Requires an Ingress Controller (nginx, traefik, etc.)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: search-api-ingress
+  namespace: bosta-search
+  labels:
+    app: search-api
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    # Enable rate limiting at ingress level
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+spec:
+  ingressClassName: nginx
+  rules:
+    # Local development (use with /etc/hosts or localhost)
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: search-api-service
+                port:
+                  number: 80
+    # Production domain
+    - host: search-api.bosta.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: search-api-service
+                port:
+                  number: 80
+  # TLS configuration (uncomment for HTTPS)
+  # tls:
+  #   - hosts:
+  #       - search-api.bosta.local
+  #     secretName: search-api-tls

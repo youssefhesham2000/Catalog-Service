@@ -1,0 +1,42 @@
+# Pod Disruption Budget
+# Ensures minimum availability during voluntary disruptions (upgrades, node maintenance)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: search-api-pdb
+  namespace: bosta-search
+  labels:
+    app: search-api
+spec:
+  minAvailable: 2  # Always keep at least 2 pods running
+  selector:
+    matchLabels:
+      app: search-api
+---
+# PDB for PostgreSQL
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-pdb
+  namespace: bosta-search
+  labels:
+    app: postgres
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres
+---
+# PDB for Redis
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: bosta-search
+  labels:
+    app: redis
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: redis

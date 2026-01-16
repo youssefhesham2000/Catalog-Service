@@ -1,0 +1,168 @@
+---
+# PgBouncer ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-config
+  namespace: bosta-search
+data:
+  pgbouncer.ini: |
+    ;; PgBouncer Configuration for Kubernetes
+
+    [databases]
+    product_catalog = host=postgres-service port=5432 dbname=product_catalog
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 6432
+    auth_type = scram-sha-256
+    auth_file = /etc/pgbouncer/userlist.txt
+
+    ; Transaction pooling - best for web apps
+    pool_mode = transaction
+
+    ; Pool sizing
+    ; For 15 API replicas with connection_limit=5: 15 × 5 = 75 client connections
+    ; Set max_client_conn to 100 for headroom
+    default_pool_size = 25
+    min_pool_size = 10
+    reserve_pool_size = 5
+    reserve_pool_timeout = 3
+    max_client_conn = 100
+    max_db_connections = 50
+
+    ; Timeouts
+    server_connect_timeout = 5
+    server_idle_timeout = 600
+    server_lifetime = 3600
+    client_idle_timeout = 0
+    client_login_timeout = 60
+    query_timeout = 30
+    query_wait_timeout = 60
+
+    ; Logging
+    log_connections = 1
+    log_disconnections = 1
+    log_pooler_errors = 1
+    stats_period = 60
+
+    ; Admin
+    admin_users = postgres
+    stats_users = postgres
+
+    ; Security - important for Prisma
+    ; extra_float_digits, search_path: Prisma compatibility
+    ignore_startup_parameters = extra_float_digits,search_path
+
+    ; TCP keepalive
+    tcp_keepalive = 1
+    tcp_keepidle = 30
+    tcp_keepintvl = 10
+    tcp_keepcnt = 3
+
+    ; DNS
+    dns_max_ttl = 15
+    dns_nxdomain_ttl = 15
+
+  # Note: Update this hash after running PostgreSQL
+  # Get with: SELECT usename, passwd FROM pg_shadow WHERE usename='postgres';
+  userlist.txt: |
+    "postgres" "SCRAM-SHA-256$4096:lkxRJJGpmd/vsrXyzBNiSw==$4h6Tzepc0Q6TbkfDHgaU2NhHC2jBfhTicZVdxQU0OXI=:766wsL1mXETt2s9Cz0fOKLqn+fRk7NjDbJ/c4HANPbA="
+---
+# PgBouncer Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: bosta-search
+  labels:
+    app: pgbouncer
+spec:
+  replicas: 1  # Use 2 for production HA
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      initContainers:
+        # Copy config files to writable location with correct permissions
+        - name: init-config
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              cp /pgbouncer-config-ro/pgbouncer.ini /pgbouncer-config/pgbouncer.ini
+              cp /pgbouncer-config-ro/userlist.txt /pgbouncer-config/userlist.txt
+              chmod 640 /pgbouncer-config/*
+              chown 70:70 /pgbouncer-config/*
+          volumeMounts:
+            - name: pgbouncer-config-ro
+              mountPath: /pgbouncer-config-ro
+            - name: pgbouncer-config
+              mountPath: /pgbouncer-config
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:v1.24.1-p0
+          ports:
+            - containerPort: 6432
+              name: pgbouncer
+          volumeMounts:
+            - name: pgbouncer-config
+              mountPath: /etc/pgbouncer
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: pgbouncer-config-ro
+          configMap:
+            name: pgbouncer-config
+        - name: pgbouncer-config
+          emptyDir: {}
+---
+# PgBouncer Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-service
+  namespace: bosta-search
+  labels:
+    app: pgbouncer
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6432
+      targetPort: 6432
+      protocol: TCP
+      name: pgbouncer
+  selector:
+    app: pgbouncer
+---
+# PodDisruptionBudget for PgBouncer
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pgbouncer-pdb
+  namespace: bosta-search
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: pgbouncer

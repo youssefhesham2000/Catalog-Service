@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bosta-search
+  labels:
+    app.kubernetes.io/name: bosta-search
+    app.kubernetes.io/part-of: bosta-platform

@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: search-api-config
+  namespace: bosta-search
+  labels:
+    app: search-api
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  API_PREFIX: "api"
+  API_VERSION: "v1"
+  LOG_LEVEL: "info"
+  LOG_PRETTY: "false"
+  # Rate limiting
+  THROTTLE_TTL: "60"
+  THROTTLE_LIMIT: "1000"
+  # Cache TTLs (seconds)
+  CACHE_TTL_SEARCH: "300"
+  CACHE_TTL_FACETS: "600"
+  # Search settings
+  SEARCH_MAX_PAGE_SIZE: "100"
+  SEARCH_DEFAULT_PAGE_SIZE: "20"
+  SEARCH_SALES_BOOST_FACTOR: "1.2"
+  SEARCH_SALES_BOOST_MODIFIER: "log1p"
+  # OpenSearch
+  OPENSEARCH_INDEX_VARIANTS: "variants"

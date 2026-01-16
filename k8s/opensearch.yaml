@@ -1,0 +1,136 @@
+# OpenSearch StatefulSet (without Operator)
+# Simpler setup with security disabled for internal use
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+  namespace: bosta-search
+  labels:
+    app: opensearch
+spec:
+  serviceName: opensearch
+  replicas: 3
+  podManagementPolicy: Parallel  # Start all pods at once for cluster formation
+  selector:
+    matchLabels:
+      app: opensearch
+  template:
+    metadata:
+      labels:
+        app: opensearch
+    spec:
+      initContainers:
+        - name: sysctl
+          image: busybox
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+        - name: fix-permissions
+          image: busybox
+          command: ["sh", "-c", "chown -R 1000:1000 /usr/share/opensearch/data"]
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/opensearch/data
+      containers:
+        - name: opensearch
+          image: opensearchproject/opensearch:2.12.0
+          ports:
+            - containerPort: 9200
+              name: http
+            - containerPort: 9300
+              name: transport
+          env:
+            - name: cluster.name
+              value: "bosta-cluster"
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: discovery.seed_hosts
+              value: "opensearch-0.opensearch,opensearch-1.opensearch,opensearch-2.opensearch"
+            - name: cluster.initial_cluster_manager_nodes
+              value: "opensearch-0,opensearch-1,opensearch-2"
+            - name: bootstrap.memory_lock
+              value: "false"
+            - name: OPENSEARCH_JAVA_OPTS
+              value: "-Xms4g -Xmx4g"
+            - name: DISABLE_INSTALL_DEMO_CONFIG
+              value: "true"
+            - name: DISABLE_SECURITY_PLUGIN
+              value: "true"
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "1000m"
+            limits:
+              memory: "5Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/opensearch/data
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health?local=true
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /_cluster/health?local=true
+              port: 9200
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 10
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: opensearch
+                topologyKey: kubernetes.io/hostname
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: standard  # Use 'gp3' for AWS, 'standard' for Kind
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 60Gi
+---
+# Headless service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  namespace: bosta-search
+  labels:
+    app: opensearch
+spec:
+  selector:
+    app: opensearch
+  ports:
+    - port: 9200
+      name: http
+    - port: 9300
+      name: transport
+  clusterIP: None
+---
+# ClusterIP service for API access
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch-service
+  namespace: bosta-search
+  labels:
+    app: opensearch
+spec:
+  selector:
+    app: opensearch
+  ports:
+    - port: 9200
+      targetPort: 9200
+      name: http

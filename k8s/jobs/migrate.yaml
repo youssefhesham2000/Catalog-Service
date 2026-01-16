@@ -1,0 +1,71 @@
+# Prisma Migration Job
+# Run with: kubectl apply -f k8s/jobs/migrate.yaml
+# Check status: kubectl get jobs -n bosta-search
+# View logs: kubectl logs -n bosta-search job/prisma-migrate
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: prisma-migrate
+  namespace: bosta-search
+  labels:
+    app: prisma-migrate
+spec:
+  ttlSecondsAfterFinished: 3600  # Auto-delete after 1 hour
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: prisma-migrate
+    spec:
+      restartPolicy: OnFailure
+      
+      initContainers:
+        # Wait for PostgreSQL to be ready
+        - name: wait-for-postgres
+          image: busybox:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for PostgreSQL..."
+              until nc -z postgres-service 5432; do
+                echo "PostgreSQL not ready, waiting..."
+                sleep 5
+              done
+              echo "PostgreSQL is ready!"
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+      
+      containers:
+        - name: migrate
+          image: bosta/search-api:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Running Prisma migrations..."
+              bunx prisma migrate deploy
+              echo "Migrations completed!"
+              
+              echo "Generating Prisma client..."
+              bunx prisma generate
+              echo "Done!"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: search-api-secrets
+                  key: DATABASE_URL
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

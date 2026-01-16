@@ -1,0 +1,113 @@
+# K6 Stress Test Job - runs from inside the cluster
+# This ensures requests are load-balanced across all API pods
+# Run with: kubectl apply -f k8s/jobs/k6-stress-test.yaml
+# Watch logs: kubectl logs -n bosta-search job/k6-stress-test -f
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-stress-test
+  namespace: bosta-search
+  labels:
+    app: k6-stress-test
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: k6-stress-test
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:latest
+          command:
+            - k6
+            - run
+            - --vus
+            - "100"
+            - --duration
+            - "2m"
+            - "-"
+          stdin: true
+          stdinOnce: true
+          env:
+            - name: BASE_URL
+              value: "http://search-api-service/api/v1"
+            - name: NO_CACHE
+              value: "1"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "500m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-test-script
+  namespace: bosta-search
+data:
+  stress-test.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+    import { Counter, Rate, Trend } from 'k6/metrics';
+
+    const searchLatency = new Trend('search_latency', true);
+    const searchErrors = new Counter('search_errors');
+    const successRate = new Rate('success_rate');
+
+    const BASE_URL = __ENV.BASE_URL || 'http://search-api-service/api/v1';
+
+    const SEARCH_TERMS = ['shirt', 'shoes', 'nike', 'adidas', 'jeans', 'jacket', 'hoodie', 'sneakers', 'watch', 'bag'];
+    const BRANDS = ['Nike', 'Adidas', 'Puma', 'Reebok', 'Modern Style', 'Urban Edge'];
+
+    export const options = {
+      stages: [
+        { duration: '30s', target: 50 },   // Ramp up
+        { duration: '1m', target: 100 },   // Hold at 100 VUs
+        { duration: '30s', target: 0 },    // Ramp down
+      ],
+      thresholds: {
+        'http_req_duration': ['p(95)<500', 'p(99)<1000'],
+        'success_rate': ['rate>0.95'],
+        'search_errors': ['count<100'],
+      },
+    };
+
+    function randomItem(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+
+    export default function() {
+      const query = randomItem(SEARCH_TERMS);
+      const priceMin = Math.floor(Math.random() * 100);
+      const priceMax = priceMin + Math.floor(Math.random() * 500) + 50;
+      
+      const url = `${BASE_URL}/search?q=${query}&limit=20&priceRange[min]=${priceMin}&priceRange[max]=${priceMax}`;
+      
+      const res = http.get(url, {
+        headers: { 'Content-Type': 'application/json' },
+        tags: { name: 'search' },
+      });
+
+      const success = check(res, {
+        'status is 200': (r) => r.status === 200,
+        'has data': (r) => {
+          try {
+            const body = JSON.parse(r.body);
+            return body.data !== undefined;
+          } catch {
+            return false;
+          }
+        },
+      });
+
+      searchLatency.add(res.timings.duration);
+      successRate.add(success);
+      if (!success) searchErrors.add(1);
+
+      sleep(0.1 + Math.random() * 0.2);
+    }

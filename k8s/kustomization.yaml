@@ -1,0 +1,30 @@
+# Kustomize configuration
+# Deploy with: kubectl apply -k k8s/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: bosta-search
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - postgres.yaml
+  - pgbouncer.yaml
+  - redis.yaml
+  - opensearch.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - pdb.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: bosta-search
+  app.kubernetes.io/part-of: bosta-platform
+  app.kubernetes.io/managed-by: kustomize
+
+# Image customization (override in overlays)
+images:
+  - name: bosta/search-api
+    newTag: latest

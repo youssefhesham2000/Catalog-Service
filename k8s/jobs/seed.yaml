@@ -1,0 +1,106 @@
+# Database & OpenSearch Seeding Job
+# Run with: kubectl apply -f k8s/jobs/seed.yaml
+# Check status: kubectl get jobs -n bosta-search
+# View logs: kubectl logs -n bosta-search job/seed-data -f
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-data
+  namespace: bosta-search
+  labels:
+    app: seed-data
+spec:
+  ttlSecondsAfterFinished: 7200  # Auto-delete after 2 hours
+  backoffLimit: 2
+  activeDeadlineSeconds: 7200  # 2 hour timeout for large seeds
+  template:
+    metadata:
+      labels:
+        app: seed-data
+    spec:
+      restartPolicy: OnFailure
+      
+      initContainers:
+        # Wait for PostgreSQL
+        - name: wait-for-postgres
+          image: busybox:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for PostgreSQL..."
+              until nc -z postgres-service 5432; do
+                echo "PostgreSQL not ready, waiting..."
+                sleep 5
+              done
+              echo "PostgreSQL is ready!"
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+        
+        # Wait for OpenSearch
+        - name: wait-for-opensearch
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for OpenSearch..."
+              until curl -s http://opensearch-service:9200/_cluster/health | grep -q '"status":"green"\|"status":"yellow"'; do
+                echo "OpenSearch not ready, waiting..."
+                sleep 5
+              done
+              echo "OpenSearch is ready!"
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+      
+      containers:
+        - name: seed
+          image: bosta/search-api:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting database and OpenSearch seeding..."
+              echo "Seeding $SEED_PRODUCTS products..."
+              echo "This may take a while for large datasets..."
+              
+              # Run the bulk seed script directly with bun
+              bun scripts/seed-bulk.ts
+              
+              echo ""
+              echo "Seeding completed!"
+              echo "Verifying data in OpenSearch..."
+              
+              # Quick verification using bun (curl not available in slim image)
+              bun -e "fetch('http://opensearch-service:9200/variants/_count').then(r=>r.json()).then(d=>console.log('OpenSearch docs:', d.count)).catch(e=>console.error(e))"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: search-api-secrets
+                  key: DATABASE_URL
+            - name: OPENSEARCH_NODE
+              value: "http://opensearch-service:9200"
+            # Seed configuration - 2 million records
+            - name: SEED_PRODUCTS
+              value: "2000000"
+            - name: SEED_BATCH_SIZE
+              value: "10000"
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"

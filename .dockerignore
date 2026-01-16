@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output  
+dist/
+build/
+
+# Testing
+coverage/
+test/
+*.spec.ts
+jest.config.js
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Git
+.git/
+.gitignore
+
+# Logs
+logs/
+*.log
+
+# Documentation
+*.md
+docs/
+specs/
+.specify/
+
+# Misc
+*.tmp
+*.temp
+.cache/

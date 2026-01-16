@@ -1,0 +1,112 @@
+# PostgreSQL StatefulSet
+# For production HA, consider CloudNativePG operator or managed service (RDS/Cloud SQL)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: bosta-search
+  labels:
+    app: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: search-api-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              value: "product_catalog"
+            - name: PGDATA
+              value: "/data/pgdata"
+            # Performance tuning for 4GB RAM
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF8"
+          args:
+            - postgres
+            - -c
+            - shared_buffers=1GB
+            - -c
+            - effective_cache_size=3GB
+            - -c
+            - maintenance_work_mem=256MB
+            - -c
+            - work_mem=16MB
+            - -c
+            - max_connections=200
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /data
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - postgres
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - postgres
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: postgres-data
+          emptyDir: {}  # For Kind testing; use volumeClaimTemplates for production
+  # Uncomment for production persistent storage:
+  # volumeClaimTemplates:
+  #   - metadata:
+  #       name: postgres-data
+  #     spec:
+  #       storageClassName: standard  # Use 'gp3' for AWS
+  #       accessModes: ["ReadWriteOnce"]
+  #       resources:
+  #         requests:
+  #           storage: 50Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: bosta-search
+  labels:
+    app: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  clusterIP: None  # Headless for StatefulSet

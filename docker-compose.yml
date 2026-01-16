@@ -1,0 +1,257 @@
+services:
+  # PostgreSQL 18 - Primary database
+  postgres:
+    image: postgres:18-alpine
+    container_name: bosta-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: product_catalog
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bosta-net
+
+  # OpenSearch 2 - Search engine (Node 1)
+  opensearch-node1:
+    image: opensearchproject/opensearch:2
+    container_name: bosta-opensearch-node1
+    restart: unless-stopped
+    environment:
+      - cluster.name=bosta-cluster
+      - node.name=opensearch-node1
+      - discovery.seed_hosts=opensearch-node1,opensearch-node2,opensearch-node3
+      - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2,opensearch-node3
+      - bootstrap.memory_lock=true
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=Bosta_Search#2026cd!
+      - "OPENSEARCH_JAVA_OPTS=-Xms4g -Xmx4g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch_data1:/usr/share/opensearch/data
+    networks:
+      - bosta-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  # OpenSearch 2 - Search engine (Node 2)
+  opensearch-node2:
+    image: opensearchproject/opensearch:2
+    container_name: bosta-opensearch-node2
+    restart: unless-stopped
+    environment:
+      - cluster.name=bosta-cluster
+      - node.name=opensearch-node2
+      - discovery.seed_hosts=opensearch-node1,opensearch-node2,opensearch-node3
+      - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2,opensearch-node3
+      - bootstrap.memory_lock=true
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=Bosta_Search#2026!
+      - "OPENSEARCH_JAVA_OPTS=-Xms4g -Xmx4g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch_data2:/usr/share/opensearch/data
+    networks:
+      - bosta-net
+    depends_on:
+      - opensearch-node1
+
+  # OpenSearch 2 - Search engine (Node 3)
+  opensearch-node3:
+    image: opensearchproject/opensearch:2
+    container_name: bosta-opensearch-node3
+    restart: unless-stopped
+    environment:
+      - cluster.name=bosta-cluster
+      - node.name=opensearch-node3
+      - discovery.seed_hosts=opensearch-node1,opensearch-node2,opensearch-node3
+      - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2,opensearch-node3
+      - bootstrap.memory_lock=true
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=Bosta_Search#2026!
+      - "OPENSEARCH_JAVA_OPTS=-Xms4g -Xmx4g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch_data3:/usr/share/opensearch/data
+    networks:
+      - bosta-net
+    depends_on:
+      - opensearch-node1
+
+  # PgBouncer - Connection pooler for PostgreSQL
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p0
+    container_name: bosta-pgbouncer
+    restart: unless-stopped
+    environment:
+      # Database connection
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=product_catalog
+      # PgBouncer settings
+      - LISTEN_PORT=6432
+      - POOL_MODE=transaction
+      # Max client connections: 15 API replicas × 5 connections = 75 (set to 100 for headroom)
+      - MAX_CLIENT_CONN=100
+      # Server pool to PostgreSQL (shared across all clients in transaction mode)
+      - DEFAULT_POOL_SIZE=25
+      - MIN_POOL_SIZE=10
+      # Max connections to PostgreSQL (should match or exceed DEFAULT_POOL_SIZE)
+      - MAX_DB_CONNECTIONS=50
+      - RESERVE_POOL_SIZE=5
+      - SERVER_IDLE_TIMEOUT=600
+      - QUERY_TIMEOUT=30
+      # Ignore startup parameters not supported in transaction pooling mode
+      # extra_float_digits: Prisma compatibility
+      # search_path: Prisma schema parameter
+      - IGNORE_STARTUP_PARAMETERS=extra_float_digits,search_path
+      # Auth settings (scram-sha-256 for PostgreSQL 14+)
+      - AUTH_TYPE=scram-sha-256
+      - AUTH_FILE=/etc/pgbouncer/userlist.txt
+    volumes:
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 6432 -U postgres || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bosta-net
+
+  # Redis 7 - Cache and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: bosta-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bosta-net
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: bosta-nginx
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+    networks:
+      - bosta-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - full
+
+  # API Service - 3 replicas behind load balancer
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # No container_name - required for scaling
+    restart: unless-stopped
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      opensearch-node1:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Connect via PgBouncer (port 6432) instead of PostgreSQL directly
+      # Using connection_limit=5 per API instance (3 replicas × 5 = 15 client connections to PgBouncer)
+      - DATABASE_URL=postgresql://postgres:postgres@pgbouncer:6432/product_catalog?schema=public&connection_limit=5&pool_timeout=10
+      - OPENSEARCH_NODE=http://opensearch-node1:9200
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_PRETTY=false
+      - THROTTLE_LIMIT=100000
+      - LOG_FILE=/app/logs/app.log
+    volumes:
+      - api_logs:/app/logs
+    networks:
+      - bosta-net
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/v1/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    profiles:
+      - full
+
+volumes:
+  postgres_data:
+  opensearch_data1:
+  opensearch_data2:
+  opensearch_data3:
+  redis_data:
+  api_logs:
+
+networks:
+  bosta-net:
+    name: bosta-network
+    driver: bridge
