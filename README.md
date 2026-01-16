@@ -55,6 +55,7 @@ Expected output:
 
 ```bash
 docker exec bosta-api-1 bunx prisma migrate deploy
+docker exec bosta-api-1 bun scripts/create-index.ts
 ```
 
 ###  Seed Data
